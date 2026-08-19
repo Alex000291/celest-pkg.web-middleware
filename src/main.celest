@@ -1,0 +1,373 @@
+import "web-core" as web;
+
+export function logger(write) {
+    byte[8] state = new Object();
+    state.write = write;
+    return function(context, next) {
+        state.write(context.request.method, context.request.path, 0);
+        byte[8] response = next();
+        state.write(context.request.method, context.request.path, response.status);
+        return (Object)response;
+    };
+}
+
+export function requestId(createId) {
+    byte[8] state = new Object();
+    state.createId = createId;
+    return function(context, next) {
+        context.set("requestId", state.createId());
+        byte[8] response = next();
+        response.header("x-request-id", context.get("requestId"));
+        return (Object)response;
+    };
+}
+
+export function cors(options) {
+    byte[8] state = new Object();
+    state.options = options;
+    return function(context, next) {
+        byte[8] response = 0;
+        if (context.request.method == "OPTIONS") response = context.body(byte(00), 204, byte(00));
+        else response = next();
+        response.header("access-control-allow-origin", state.options.origin);
+        response.header("access-control-allow-methods", state.options.methods);
+        response.header("access-control-allow-headers", state.options.headers);
+        response.header("vary", "Origin");
+        if (state.options.credentials != 0) {
+            response.header("access-control-allow-credentials", "true");
+        }
+        if (Object.address(state.options, "exposeHeaders") != 0) response.header("access-control-expose-headers", state.options.exposeHeaders);
+        if (Object.address(state.options, "maxAge") != 0) response.header("access-control-max-age", state.options.maxAge);
+        return (Object)response;
+    };
+}
+
+export function secureHeaders() {
+    return function(context, next) {
+        byte[8] response = next();
+        response.header("x-content-type-options", "nosniff");
+        response.header("x-frame-options", "DENY");
+        response.header("referrer-policy", "no-referrer");
+        response.header("cross-origin-resource-policy", "same-origin");
+        return (Object)response;
+    };
+}
+
+export function bodyLimit(limit) {
+    return function(context, next) {
+        if (context.request.bodyLength > limit) {
+            return context.text("Payload Too Large", 413);
+        }
+        return next();
+    };
+}
+
+export function timeout(deadline) {
+    return function(context, next) {
+        context.set("deadline", deadline);
+        return next();
+    };
+}
+
+export function compression(selectEncoding) {
+    byte[8] state = new Object();
+    state.selectEncoding = selectEncoding;
+    return function(context, next) {
+        byte[8] response = next();
+        byte[8] encoding = state.selectEncoding(context.request, (Object)response);
+        if (encoding != byte(00)) response.header("content-encoding", encoding);
+        return (Object)response;
+    };
+}
+
+export function etag(createTag) {
+    byte[8] state = new Object();
+    state.createTag = createTag;
+    return function(context, next) {
+        byte[8] response = next();
+        response.header("etag", state.createTag(response.body));
+        return (Object)response;
+    };
+}
+
+export function bearerAuth(verify) {
+    byte[8] state = new Object();
+    state.verify = verify;
+    return function(context, next) {
+        byte[8] work = new Object();
+        work.principal = state.verify(context.request.header("authorization"));
+        if (work.principal == 0) return context.text("Unauthorized", 401);
+        context.set("principal", work.principal);
+        return next();
+    };
+}
+
+export function basicAuth(verify) {
+    byte[8] state = new Object();
+    state.verify = verify;
+    return function(context, next) {
+        byte[8] principal = state.verify(context.request.header("authorization"));
+        if (principal == 0) {
+            byte[8] response = context.text("Unauthorized", 401);
+            response.header("www-authenticate", "Basic realm=\"restricted\"");
+            return (Object)response;
+        }
+        context.set("principal", principal);
+        return next();
+    };
+}
+
+export function jwt(verify) {
+    byte[8] state = new Object();
+    state.verify = verify;
+    return function(context, next) {
+        byte[8] claims = state.verify(context.request.header("authorization"));
+        if (claims == 0) {
+            byte[8] response = context.text("Unauthorized", 401);
+            response.header("www-authenticate", "Bearer");
+            return (Object)response;
+        }
+        context.set("jwt", claims);
+        return next();
+    };
+}
+
+export function csrf(verify) {
+    byte[8] state = new Object();
+    state.verify = verify;
+    return function(context, next) {
+        if (state.verify(context.request) == 0) return context.text("Forbidden", 403);
+        return next();
+    };
+}
+
+export function ipRestriction(allow) {
+    byte[8] state = new Object();
+    state.allow = allow;
+    return function(context, next) {
+        if (state.allow(context.request) == 0) return context.text("Forbidden", 403);
+        return next();
+    };
+}
+
+export function rateLimit(acquire) {
+    byte[8] state = new Object();
+    state.acquire = acquire;
+    return function(context, next) {
+        if (state.acquire(context.request) == 0) return context.text("Too Many Requests", 429);
+        return next();
+    };
+}
+
+export function timing(record) {
+    byte[8] state = new Object();
+    state.record = record;
+    return function(context, next) {
+        byte[8] response = next();
+        state.record(context.request, response);
+        return (Object)response;
+    };
+}
+
+export function tracing(start, finish) {
+    byte[8] state = new Object();
+    state.start = start;
+    state.finish = finish;
+    return function(context, next) {
+        context.set("trace", state.start(context.request));
+        byte[8] response = next();
+        state.finish(context.get("trace"), response);
+        return (Object)response;
+    };
+}
+
+export function cache(resolve) {
+    byte[8] state = new Object();
+    state.resolve = resolve;
+    return function(context, next) {
+        byte[8] cached = state.resolve(context.request, 0);
+        if (cached != 0) return (Object)cached;
+        byte[8] response = next();
+        state.resolve(context.request, response);
+        return (Object)response;
+    };
+}
+
+export function language(resolve) {
+    byte[8] state = new Object();
+    state.resolve = resolve;
+    return function(context, next) {
+        context.set("language", state.resolve(context.request));
+        return next();
+    };
+}
+
+export function methodOverride(resolve) {
+    byte[8] state = new Object();
+    state.resolve = resolve;
+    return function(context, next) {
+        context.request.method = state.resolve(context.request);
+        return next();
+    };
+}
+
+export function health(check) {
+    byte[8] state = new Object();
+    state.check = check;
+    return function(context, next) {
+        byte[8] status = state.check();
+        if (status == 0) return context.text("Service Unavailable", 503);
+        return context.json(status, 200);
+    };
+}
+
+export function when(predicate, middleware) {
+    byte[8] state = new Object();
+    state.predicate = predicate;
+    state.middleware = middleware;
+    return function(context, next) {
+        if (state.predicate(context.request) == 0) return next();
+        return state.middleware(context, next);
+    };
+}
+
+export function unless(predicate, middleware) {
+    byte[8] state = new Object();
+    state.predicate = predicate;
+    state.middleware = middleware;
+    return function(context, next) {
+        if (state.predicate(context.request) != 0) return next();
+        return state.middleware(context, next);
+    };
+}
+
+export function compose(first, second) {
+    byte[8] state = new Object();
+    state.first = first;
+    state.second = second;
+    return function(context, next) {
+        byte[8] chain = new Object();
+        chain.context = context;
+        chain.next = next;
+        chain.second = state.second;
+        byte[8] continuation = function() {
+            return chain.second(chain.context, chain.next);
+        };
+        return state.first(context, (Function)continuation);
+    };
+}
+
+export function staticFiles(resolve) {
+    byte[8] state = new Object();
+    state.resolve = resolve;
+    return function(context, next) {
+        byte[8] work = new Object();
+        work.asset = state.resolve(context.request.path);
+        if (work.asset == 0) return next();
+        return context.body(work.asset.body, work.asset.status, work.asset.contentType);
+    };
+}
+
+export function prettyJson(format) {
+    byte[8] state = new Object();
+    state.format = format;
+    return function(context, next) {
+        byte[8] response = next();
+        if (response.contentType == "application/json; charset=utf-8") {
+            response.body = state.format(response.body);
+        }
+        return (Object)response;
+    };
+}
+
+export function proxy(forward) {
+    byte[8] state = new Object();
+    state.forward = forward;
+    return function(context, next) {
+        return state.forward(context.request);
+    };
+}
+
+export function contextStorage(createValue) {
+    byte[8] state = new Object();
+    state.createValue = createValue;
+    return function(context, next) {
+        context.set("storage", state.createValue(context.request));
+        return next();
+    };
+}
+
+export function trailingSlash(resolve) {
+    byte[8] state = new Object();
+    state.resolve = resolve;
+    return function(context, next) {
+        context.request.path = state.resolve(context.request.path);
+        return next();
+    };
+}
+
+export function overrideResponse(transform) {
+    byte[8] state = new Object();
+    state.transform = transform;
+    return function(context, next) {
+        return state.transform(context, next());
+    };
+}
+
+test "adds response security and request id headers" {
+    byte[8] app = web.create();
+    byte[8] createId = function() { return "request-42"; };
+    byte[8] requestIdMiddleware = requestId((Function)createId);
+    byte[8] securityMiddleware = secureHeaders();
+    byte[8] handler = function(context) { return context.text("ok", 200); };
+    app.use((Function)requestIdMiddleware);
+    app.use((Function)securityMiddleware);
+    app.get("/", (Function)handler);
+    byte[8] response = app.fetch(web.request("GET", "/", byte(00)));
+    if (Object.get(response.headers, "x-request-id") != "request-42" ||
+        Object.get(response.headers, "x-frame-options") != "DENY") {
+        throw "middleware headers differ";
+    }
+}
+
+test "rejects oversized request bodies" {
+    byte[8] app = web.create();
+    byte[8] limit = bodyLimit(4);
+    byte[8] handler = function(context) { return context.text("ok", 200); };
+    app.use((Function)limit);
+    app.post("/", (Function)handler);
+    byte[8] request = web.request("POST", "/", "12345");
+    request.bodyLength = 5;
+    byte[8] response = app.fetch((Object)request);
+    if (response.status != 413) throw "body limit did not reject request";
+}
+
+test "composes conditional middleware" {
+    byte[8] app = web.create();
+    byte[8] enabled = function(request) { return 1; };
+    byte[8] first = function(context, next) { context.set("first", 1); return next(); };
+    byte[8] second = function(context, next) { context.set("second", 1); return next(); };
+    byte[8] combined = compose((Function)first, (Function)second);
+    byte[8] conditional = when((Function)enabled, (Function)combined);
+    byte[8] handler = function(context) {
+        if (context.get("first") != 1 || context.get("second") != 1) throw "composition differs";
+        return context.text("ok", 200);
+    };
+    app.use((Function)conditional);
+    app.get("/", (Function)handler);
+    byte[8] response = app.fetch(web.request("GET", "/", byte(00)));
+    if (response.status != 200) throw "conditional middleware failed";
+}
+
+test "handles CORS preflight requests" {
+    byte[8] options = new Object();
+    options.origin = "https://example.com";
+    options.methods = "GET,POST";
+    options.headers = "content-type";
+    options.credentials = 1;
+    options.maxAge = "600";
+    byte[8] app = web.create();
+    app.use(cors((Object)options));
+    byte[8] response = app.fetch(web.request("OPTIONS", "/items", byte(00)));
+    if (response.status != 204 || Object.get(response.headers, "access-control-max-age") != "600") throw "CORS preflight differs";
+}
