@@ -1,4 +1,8 @@
 import "web-core" as web;
+import "std:Object";
+import "std:JSON";
+import "std:Bytes";
+import "std:HTTP";
 
 export function logger(write) {
     byte[8] state = new Object();
@@ -216,8 +220,13 @@ export function health(check) {
     state.check = check;
     return function(context, next) {
         byte[8] status = state.check();
-        if (status == 0) return context.text("Service Unavailable", 503);
-        return context.json(status, 200);
+        byte[8] body = new Object();
+        if (status == 0) {
+            body.status = "unavailable";
+            return context.json((Object)body, 503);
+        }
+        body.status = "ok";
+        return context.json((Object)body, 200);
     };
 }
 
@@ -268,23 +277,58 @@ export function staticFiles(resolve) {
     };
 }
 
-export function prettyJson(format) {
+export function prettyJson(policy) {
     byte[8] state = new Object();
-    state.format = format;
+    state.policy = policy;
     return function(context, next) {
         byte[8] response = next();
         if (response.contentType == "application/json; charset=utf-8") {
-            response.body = state.format(response.body);
+            byte[8] value = JSON.parse(response.body);
+            byte[8] encoded = JSON.stringify((Object)value, state.policy);
+            response.body = Bytes.dynamic_bytes((Object)encoded);
         }
         return (Object)response;
     };
 }
 
-export function proxy(forward) {
+export function proxy(upstream, settings) {
     byte[8] state = new Object();
-    state.forward = forward;
-    return function(context, next) {
-        return state.forward(context.request);
+    state.upstream = upstream;
+    state.settings = settings;
+    return async function(context, next) {
+        byte[8] options = new Object();
+        options.method = context.request.method;
+        byte[8] requestHeaders = context.request.headers;
+        if (requestHeaders == 0) requestHeaders = new Object();
+        options.headers = HTTP.proxy_headers((Object)requestHeaders);
+        if (context.request.method != "GET" && context.request.method != "HEAD")
+            options.body = context.request.body;
+        options.redirect = "manual";
+        options.timeout = 30000;
+        options.maximumResponseBytes = 16777216;
+        if (Object.address(state.settings, "redirect") != 0)
+            options.redirect = state.settings.redirect;
+        if (Object.address(state.settings, "timeout") != 0)
+            options.timeout = state.settings.timeout;
+        if (Object.address(state.settings, "maximumResponseBytes") != 0)
+            options.maximumResponseBytes = state.settings.maximumResponseBytes;
+        byte[8] upstreamResponse = await HTTP.fetch(
+            state.upstream + context.request.rawPath, (Object)options);
+        byte[8] contentType = Object.get(upstreamResponse.headers, "content-type");
+        byte[8] response = 0;
+        if (contentType == 0)
+            response = context.body(upstreamResponse.body,
+                upstreamResponse.status, "application/octet-stream");
+        else response = context.body(upstreamResponse.body,
+            upstreamResponse.status, contentType);
+        response.upstreamHeaders = upstreamResponse.headers;
+        byte[8] lifecycle = new Object();
+        lifecycle.response = upstreamResponse;
+        response.afterSend = function() {
+            HTTP.response_close((Object)lifecycle.response);
+            return 1;
+        };
+        return (Object)response;
     };
 }
 
