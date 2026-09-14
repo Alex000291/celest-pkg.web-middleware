@@ -5,44 +5,41 @@ import "std:Bytes";
 import "std:HTTP";
 
 export function logger(write) {
-    byte[8] state = new Object();
-    state.write = write;
+    byte[8] writer = write;
     return function(context, next) {
-        state.write(context.request.method, context.request.path, 0);
+        writer(context.request.method, context.request.path, 0);
         byte[8] response = next();
-        state.write(context.request.method, context.request.path, response.status);
-        return (Object)response;
+        writer(context.request.method, context.request.path, response.status);
+        return response;
     };
 }
 
 export function requestId(createId) {
-    byte[8] state = new Object();
-    state.createId = createId;
+    byte[8] create = createId;
     return function(context, next) {
-        context.set("requestId", state.createId());
+        context.set("requestId", create());
         byte[8] response = next();
         response.header("x-request-id", context.get("requestId"));
-        return (Object)response;
+        return response;
     };
 }
 
 export function cors(options) {
-    byte[8] state = new Object();
-    state.options = options;
+    byte[8] configured = options;
     return function(context, next) {
         byte[8] response = 0;
         if (context.request.method == "OPTIONS") response = context.body(byte(00), 204, byte(00));
         else response = next();
-        response.header("access-control-allow-origin", state.options.origin);
-        response.header("access-control-allow-methods", state.options.methods);
-        response.header("access-control-allow-headers", state.options.headers);
+        response.header("access-control-allow-origin", configured.origin);
+        response.header("access-control-allow-methods", configured.methods);
+        response.header("access-control-allow-headers", configured.headers);
         response.header("vary", "Origin");
-        if (state.options.credentials != 0) {
+        if (configured.credentials != 0) {
             response.header("access-control-allow-credentials", "true");
         }
-        if (Object.address(state.options, "exposeHeaders") != 0) response.header("access-control-expose-headers", state.options.exposeHeaders);
-        if (Object.address(state.options, "maxAge") != 0) response.header("access-control-max-age", state.options.maxAge);
-        return (Object)response;
+        if (Object.address(configured, "exposeHeaders") != 0) response.header("access-control-expose-headers", configured.exposeHeaders);
+        if (Object.address(configured, "maxAge") != 0) response.header("access-control-max-age", configured.maxAge);
+        return response;
     };
 }
 
@@ -53,7 +50,7 @@ export function secureHeaders() {
         response.header("x-frame-options", "DENY");
         response.header("referrer-policy", "no-referrer");
         response.header("cross-origin-resource-policy", "same-origin");
-        return (Object)response;
+        return response;
     };
 }
 
@@ -74,32 +71,28 @@ export function timeout(deadline) {
 }
 
 export function compression(selectEncoding) {
-    byte[8] state = new Object();
-    state.selectEncoding = selectEncoding;
+    byte[8] select = selectEncoding;
     return function(context, next) {
         byte[8] response = next();
-        byte[8] encoding = state.selectEncoding(context.request, (Object)response);
+        byte[8] encoding = select(context.request, response);
         if (encoding != byte(00)) response.header("content-encoding", encoding);
-        return (Object)response;
+        return response;
     };
 }
 
 export function etag(createTag) {
-    byte[8] state = new Object();
-    state.createTag = createTag;
+    byte[8] create = createTag;
     return function(context, next) {
         byte[8] response = next();
-        response.header("etag", state.createTag(response.body));
-        return (Object)response;
+        response.header("etag", create(response.body));
+        return response;
     };
 }
 
 export function bearerAuth(verify) {
-    byte[8] state = new Object();
-    state.verify = verify;
+    byte[8] verifier = verify;
     return function(context, next) {
-        byte[8] work = new Object();
-        work.principal = state.verify(context.request.header("authorization"));
+        byte[8] work = new { principal: verifier(context.request.header("authorization")) };
         if (work.principal == 0) return context.text("Unauthorized", 401);
         context.set("principal", work.principal);
         return next();
@@ -107,14 +100,13 @@ export function bearerAuth(verify) {
 }
 
 export function basicAuth(verify) {
-    byte[8] state = new Object();
-    state.verify = verify;
+    byte[8] verifier = verify;
     return function(context, next) {
-        byte[8] principal = state.verify(context.request.header("authorization"));
+        byte[8] principal = verifier(context.request.header("authorization"));
         if (principal == 0) {
             byte[8] response = context.text("Unauthorized", 401);
             response.header("www-authenticate", "Basic realm=\"restricted\"");
-            return (Object)response;
+            return response;
         }
         context.set("principal", principal);
         return next();
@@ -122,14 +114,13 @@ export function basicAuth(verify) {
 }
 
 export function jwt(verify) {
-    byte[8] state = new Object();
-    state.verify = verify;
+    byte[8] verifier = verify;
     return function(context, next) {
-        byte[8] claims = state.verify(context.request.header("authorization"));
+        byte[8] claims = verifier(context.request.header("authorization"));
         if (claims == 0) {
             byte[8] response = context.text("Unauthorized", 401);
             response.header("www-authenticate", "Bearer");
-            return (Object)response;
+            return response;
         }
         context.set("jwt", claims);
         return next();
@@ -137,175 +128,155 @@ export function jwt(verify) {
 }
 
 export function csrf(verify) {
-    byte[8] state = new Object();
-    state.verify = verify;
+    byte[8] verifier = verify;
     return function(context, next) {
-        if (state.verify(context.request) == 0) return context.text("Forbidden", 403);
+        if (verifier(context.request) == 0) return context.text("Forbidden", 403);
         return next();
     };
 }
 
 export function ipRestriction(allow) {
-    byte[8] state = new Object();
-    state.allow = allow;
+    byte[8] allowed = allow;
     return function(context, next) {
-        if (state.allow(context.request) == 0) return context.text("Forbidden", 403);
+        if (allowed(context.request) == 0) return context.text("Forbidden", 403);
         return next();
     };
 }
 
 export function rateLimit(acquire) {
-    byte[8] state = new Object();
-    state.acquire = acquire;
+    byte[8] acquisition = acquire;
     return function(context, next) {
-        if (state.acquire(context.request) == 0) return context.text("Too Many Requests", 429);
+        if (acquisition(context.request) == 0) return context.text("Too Many Requests", 429);
         return next();
     };
 }
 
 export function timing(record) {
-    byte[8] state = new Object();
-    state.record = record;
+    byte[8] recorder = record;
     return function(context, next) {
         byte[8] response = next();
-        state.record(context.request, response);
-        return (Object)response;
+        recorder(context.request, response);
+        return response;
     };
 }
 
 export function tracing(start, finish) {
-    byte[8] state = new Object();
-    state.start = start;
-    state.finish = finish;
+    byte[8] begin = start;
+    byte[8] end = finish;
     return function(context, next) {
-        context.set("trace", state.start(context.request));
+        context.set("trace", begin(context.request));
         byte[8] response = next();
-        state.finish(context.get("trace"), response);
-        return (Object)response;
+        end(context.get("trace"), response);
+        return response;
     };
 }
 
 export function cache(resolve) {
-    byte[8] state = new Object();
-    state.resolve = resolve;
+    byte[8] resolver = resolve;
     return function(context, next) {
-        byte[8] cached = state.resolve(context.request, 0);
-        if (cached != 0) return (Object)cached;
+        byte[8] cached = resolver(context.request, 0);
+        if (cached != 0) return cached;
         byte[8] response = next();
-        state.resolve(context.request, response);
-        return (Object)response;
+        resolver(context.request, response);
+        return response;
     };
 }
 
 export function language(resolve) {
-    byte[8] state = new Object();
-    state.resolve = resolve;
+    byte[8] resolver = resolve;
     return function(context, next) {
-        context.set("language", state.resolve(context.request));
+        context.set("language", resolver(context.request));
         return next();
     };
 }
 
 export function methodOverride(resolve) {
-    byte[8] state = new Object();
-    state.resolve = resolve;
+    byte[8] resolver = resolve;
     return function(context, next) {
-        context.request.method = state.resolve(context.request);
+        context.request.method = resolver(context.request);
         return next();
     };
 }
 
 export function health(check) {
-    byte[8] state = new Object();
-    state.check = check;
+    byte[8] checker = check;
     return function(context, next) {
-        byte[8] status = state.check();
-        byte[8] body = new Object();
+        byte[8] status = checker();
         if (status == 0) {
-            body.status = "unavailable";
-            return context.json((Object)body, 503);
+            byte[8] body = new { status: "unavailable" };
+            return context.json(body, 503);
         }
-        body.status = "ok";
-        return context.json((Object)body, 200);
+        byte[8] body = new { status: "ok" };
+        return context.json(body, 200);
     };
 }
 
 export function when(predicate, middleware) {
-    byte[8] state = new Object();
-    state.predicate = predicate;
-    state.middleware = middleware;
+    byte[8] condition = predicate;
+    byte[8] selected = middleware;
     return function(context, next) {
-        if (state.predicate(context.request) == 0) return next();
-        return state.middleware(context, next);
+        if (condition(context.request) == 0) return next();
+        return selected(context, next);
     };
 }
 
 export function unless(predicate, middleware) {
-    byte[8] state = new Object();
-    state.predicate = predicate;
-    state.middleware = middleware;
+    byte[8] condition = predicate;
+    byte[8] selected = middleware;
     return function(context, next) {
-        if (state.predicate(context.request) != 0) return next();
-        return state.middleware(context, next);
+        if (condition(context.request) != 0) return next();
+        return selected(context, next);
     };
 }
 
 export function compose(first, second) {
-    byte[8] state = new Object();
-    state.first = first;
-    state.second = second;
+    byte[8] initial = first;
+    byte[8] following = second;
     return function(context, next) {
-        byte[8] chain = new Object();
-        chain.context = context;
-        chain.next = next;
-        chain.second = state.second;
+        byte[8] chain = new { context: context, next: next, following: following };
         byte[8] continuation = function() {
-            return chain.second(chain.context, chain.next);
+            return chain.following(chain.context, chain.next);
         };
-        return state.first(context, (Function)continuation);
+        return initial(context, continuation);
     };
 }
 
 export function staticFiles(resolve) {
-    byte[8] state = new Object();
-    state.resolve = resolve;
+    byte[8] resolver = resolve;
     return function(context, next) {
-        byte[8] work = new Object();
-        work.asset = state.resolve(context.request.path);
+        byte[8] work = new { asset: resolver(context.request.path) };
         if (work.asset == 0) return next();
         return context.body(work.asset.body, work.asset.status, work.asset.contentType);
     };
 }
 
 export function prettyJson(policy) {
-    byte[8] state = new Object();
-    state.policy = policy;
+    byte[8] formatting = policy;
     return function(context, next) {
         byte[8] response = next();
         if (response.contentType == "application/json; charset=utf-8") {
             byte[8] value = JSON.parse(response.body);
-            byte[8] encoded = JSON.stringify((Object)value, state.policy);
-            response.body = Bytes.dynamic_bytes((Object)encoded);
+            byte[8] encoded = JSON.stringify(value, formatting);
+            response.body = Bytes.dynamic_bytes(encoded);
         }
-        return (Object)response;
+        return response;
     };
 }
 
 export function proxy(upstream, settings) {
-    byte[8] state = new Object();
-    state.upstream = upstream;
-    state.settings = settings;
+    byte[8] state = new { target: upstream, settings: settings };
     return async function(context, next) {
-        byte[8] options = new Object();
-        options.method = context.request.method;
+        byte[8] options = new {
+            method: context.request.method,
+            redirect: "manual",
+            timeout: 30000,
+            maximumResponseBytes: 16777216
+        };
         byte[8] requestHeaders = context.request.headers;
         if (requestHeaders == 0) requestHeaders = new Object();
-        options.headers = HTTP.proxy_headers((Object)requestHeaders);
+        options.headers = HTTP.proxy_headers(requestHeaders);
         if (context.request.method != "GET" && context.request.method != "HEAD")
             options.body = context.request.body;
-        options.redirect = "manual";
-        options.timeout = 30000;
-        options.maximumResponseBytes = 16777216;
         if (Object.address(state.settings, "redirect") != 0)
             options.redirect = state.settings.redirect;
         if (Object.address(state.settings, "timeout") != 0)
@@ -313,7 +284,7 @@ export function proxy(upstream, settings) {
         if (Object.address(state.settings, "maximumResponseBytes") != 0)
             options.maximumResponseBytes = state.settings.maximumResponseBytes;
         byte[8] upstreamResponse = await HTTP.fetch(
-            state.upstream + context.request.rawPath, (Object)options);
+            state.target + context.request.rawPath, options);
         byte[8] contentType = Object.get(upstreamResponse.headers, "content-type");
         byte[8] response = 0;
         if (contentType == 0)
@@ -322,51 +293,47 @@ export function proxy(upstream, settings) {
         else response = context.body(upstreamResponse.body,
             upstreamResponse.status, contentType);
         response.upstreamHeaders = upstreamResponse.headers;
-        byte[8] lifecycle = new Object();
-        lifecycle.response = upstreamResponse;
+        byte[8] lifecycle = new { response: upstreamResponse };
         response.afterSend = function() {
-            HTTP.response_close((Object)lifecycle.response);
+            HTTP.response_close(lifecycle.response);
             return 1;
         };
-        return (Object)response;
+        return response;
     };
 }
 
 export function contextStorage(createValue) {
-    byte[8] state = new Object();
-    state.createValue = createValue;
+    byte[8] create = createValue;
     return function(context, next) {
-        context.set("storage", state.createValue(context.request));
+        context.set("storage", create(context.request));
         return next();
     };
 }
 
 export function trailingSlash(resolve) {
-    byte[8] state = new Object();
-    state.resolve = resolve;
+    byte[8] resolver = resolve;
     return function(context, next) {
-        context.request.path = state.resolve(context.request.path);
+        context.request.path = resolver(context.request.path);
         return next();
     };
 }
 
 export function overrideResponse(transform) {
-    byte[8] state = new Object();
-    state.transform = transform;
+    byte[8] transformer = transform;
     return function(context, next) {
-        return state.transform(context, next());
+        return transformer(context, next());
     };
 }
 
 test "adds response security and request id headers" {
     byte[8] app = web.create();
     byte[8] createId = function() { return "request-42"; };
-    byte[8] requestIdMiddleware = requestId((Function)createId);
+    byte[8] requestIdMiddleware = requestId(createId);
     byte[8] securityMiddleware = secureHeaders();
     byte[8] handler = function(context) { return context.text("ok", 200); };
-    app.use((Function)requestIdMiddleware);
-    app.use((Function)securityMiddleware);
-    app.get("/", (Function)handler);
+    app.use(requestIdMiddleware);
+    app.use(securityMiddleware);
+    app.get("/", handler);
     byte[8] response = app.fetch(web.request("GET", "/", byte(00)));
     if (Object.get(response.headers, "x-request-id") != "request-42" ||
         Object.get(response.headers, "x-frame-options") != "DENY") {
@@ -378,11 +345,11 @@ test "rejects oversized request bodies" {
     byte[8] app = web.create();
     byte[8] limit = bodyLimit(4);
     byte[8] handler = function(context) { return context.text("ok", 200); };
-    app.use((Function)limit);
-    app.post("/", (Function)handler);
+    app.use(limit);
+    app.post("/", handler);
     byte[8] request = web.request("POST", "/", "12345");
     request.bodyLength = 5;
-    byte[8] response = app.fetch((Object)request);
+    byte[8] response = app.fetch(request);
     if (response.status != 413) throw "body limit did not reject request";
 }
 
@@ -391,27 +358,28 @@ test "composes conditional middleware" {
     byte[8] enabled = function(request) { return 1; };
     byte[8] first = function(context, next) { context.set("first", 1); return next(); };
     byte[8] second = function(context, next) { context.set("second", 1); return next(); };
-    byte[8] combined = compose((Function)first, (Function)second);
-    byte[8] conditional = when((Function)enabled, (Function)combined);
+    byte[8] combined = compose(first, second);
+    byte[8] conditional = when(enabled, combined);
     byte[8] handler = function(context) {
         if (context.get("first") != 1 || context.get("second") != 1) throw "composition differs";
         return context.text("ok", 200);
     };
-    app.use((Function)conditional);
-    app.get("/", (Function)handler);
+    app.use(conditional);
+    app.get("/", handler);
     byte[8] response = app.fetch(web.request("GET", "/", byte(00)));
     if (response.status != 200) throw "conditional middleware failed";
 }
 
 test "handles CORS preflight requests" {
-    byte[8] options = new Object();
-    options.origin = "https://example.com";
-    options.methods = "GET,POST";
-    options.headers = "content-type";
-    options.credentials = 1;
-    options.maxAge = "600";
+    byte[8] options = new {
+        origin: "https://example.com",
+        methods: "GET,POST",
+        headers: "content-type",
+        credentials: 1,
+        maxAge: "600"
+    };
     byte[8] app = web.create();
-    app.use(cors((Object)options));
+    app.use(cors(options));
     byte[8] response = app.fetch(web.request("OPTIONS", "/items", byte(00)));
     if (response.status != 204 || Object.get(response.headers, "access-control-max-age") != "600") throw "CORS preflight differs";
 }
